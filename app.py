@@ -90,6 +90,71 @@ def format_count_response(text):
     else:
         opening = "A grand procession of prose and poetry..."
     
+    # --- FIXED HERE: Closed the f-string and completed the output ---
     response = f"""📖 *Count Wordsworth's Report*
 
-{opening}
+_{opening}_
+
+✨ *The Tapestry of Your Text:*
+• Words: **{word_count}**
+• Characters (with spaces): **{char_count}**
+• Characters (no spaces): **{char_no_space}**
+• Lines: **{line_count}**
+• Sentences: **{sentence_count}**
+
+{check_poetic_form(text)}"""
+    return response
+
+# ========== TELEGRAM BOT HANDLERS ==========
+async def start(update: Update, context):
+    """Send a message when the command /start is issued."""
+    await update.message.reply_text(
+        "Greetings! I am Count Wordsworth. Send me any text or poem, and I will analyze its structure for you.",
+        parse_mode=ParseMode.MARKDOWN
+    )
+
+async def handle_count(update: Update, context):
+    """Handle the /count command or direct text messages."""
+    # If it's a command, take the text after /count. Otherwise, take the whole message text.
+    text = " ".join(context.args) if context.args else update.message.text
+    
+    # Remove the command string if they typed it directly
+    if text.startswith('/count'):
+        text = text.replace('/count', '', 1).strip()
+
+    response = format_count_response(text)
+    await update.message.reply_text(response, parse_mode=ParseMode.MARKDOWN)
+
+# ========== FLASK & BOT RUNNERS ==========
+@app.route('/')
+def health_check():
+    """Health check endpoint for Render."""
+    return jsonify({"status": "healthy"}), 200
+
+def run_flask():
+    """Run Flask on port 10000 (Render default)."""
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
+
+def main():
+    """Start the bot using polling."""
+    global telegram_app
+    
+    # Build the application
+    telegram_app = Application.builder().token(TOKEN).build()
+
+    # Add handlers
+    telegram_app.add_handler(CommandHandler("start", start))
+    telegram_app.add_handler(CommandHandler("count", handle_count))
+    telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_count))
+
+    # Run Flask in a background thread so Render health check doesn't timeout
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+
+    # Start the Telegram Bot polling loop
+    print("Starting bot...")
+    telegram_app.run_polling()
+
+if __name__ == '__main__':
+    main()
