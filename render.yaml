@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: twordsworth-bot
+    runtime: python
+    repo: https://github.com/YOUR_USERNAME/TWordsworth_Bot
+    plan: free
+    envVars:
+      - key: TELEGRAM_TOKEN
+        sync: false
+      - key: RENDER_SERVICE_URL
+        fromService:
+          name: twordsworth-bot
+          type: web
+          property: url
+    buildCommand: pip install -r requirements.txt
+    startCommand: python app.py
