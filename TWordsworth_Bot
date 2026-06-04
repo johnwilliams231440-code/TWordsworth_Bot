@@ -1,0 +1,5 @@
+TWordsworth_Bot/
+├── app.py              # Main bot code
+├── requirements.txt    # Python dependencies
+├── render.yaml         # Render deployment config (optional)
+└── .gitignore          # Git ignore file
