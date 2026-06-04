@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: wordsworth-bot
+    name: wordsworth-bot-service
     runtime: python
     buildCommand: pip install -r requirements.txt
     startCommand: python app.py
@@ -8,4 +8,6 @@ services:
       - key: PYTHON_VERSION
         value: 3.11.9
       - key: TELEGRAM_TOKEN
+        sync: false
+      - key: RENDER_EXTERNAL_URL
         sync: false
