@@ -1,25 +1,28 @@
 import os
 import re
-import logging
+import asyncio
 from flask import Flask, request, jsonify
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 from telegram.constants import ParseMode
-import asyncio
-from hg_wsgi import HWServer # Render-compatible minimal server layer, or use standard hypercorn/uvicorn
 
 # ========== CONFIGURATION ==========
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
+# Example: https://your-app-name.onrender.com
+RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL") 
+
 if not TOKEN:
     raise ValueError("TELEGRAM_TOKEN environment variable not set")
 
-# Flask app for health checks
+# Initialize Flask
 app = Flask(__name__)
+
+# Initialize Telegram Application globally
+telegram_app = Application.builder().token(TOKEN).build()
 
 # ========== HELPER FUNCTIONS ==========
 def count_words(text):
-    words = re.findall(r'\b\w+\b', text)
-    return len(words)
+    return len(re.findall(r'\b\w+\b', text))
 
 def count_characters(text):
     return len(text)
@@ -99,40 +102,41 @@ async def handle_count(update: Update, context):
     response = format_count_response(text)
     await update.message.reply_text(response, parse_mode=ParseMode.MARKDOWN)
 
-# ========== FLASK ROUTE ==========
+# Register Handlers to the Application engine
+telegram_app.add_handler(CommandHandler("start", start))
+telegram_app.add_handler(CommandHandler("count", handle_count))
+telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_count))
+
+# ========== FLASK ROUTES (WEBHOOK INTERFACE) ==========
 @app.route('/')
 def health_check():
-    return jsonify({"status": "healthy", "bot_running": True}), 200
+    return jsonify({"status": "healthy", "mode": "webhook"}), 200
 
-# ========== ASYNC ORCHESTRATION ==========
-async def run_flask_async():
-    """Runs a non-blocking local webserver for Render health checks."""
-    from werkzeug.serving import make_server
-    port = int(os.environ.get("PORT", 10000))
-    server = make_server('0.0.0.0', port, app)
+@app.route(f'/{TOKEN}', methods=['POST'])
+def telegram_webhook():
+    """Receives incoming messages directly from Telegram."""
+    update = Update.de_json(request.get_json(force=True), telegram_app.bot)
     
-    # Run the server loop inside an executor context safely
-    loop = asyncio.get_running_loop()
-    print(f"Starting web server on port {port}...")
-    await loop.run_in_executor(None, server.serve_forever)
+    # Process the update smoothly using the underlying framework loop
+    asyncio.run(telegram_app.process_update(update))
+    return "OK", 200
 
-async def main():
-    # Build the application smoothly without running standard blocking run_polling()
-    telegram_app = Application.builder().token(TOKEN).build()
+def setup_webhook():
+    """Tells Telegram where to send data on startup."""
+    if RENDER_EXTERNAL_URL:
+        webhook_url = f"{RENDER_EXTERNAL_URL.rstrip('/')}/{TOKEN}"
+        print(f"Setting webhook destination to: {webhook_url}")
+        
+        asyncio.run(telegram_app.initialize())
+        asyncio.run(telegram_app.bot.set_webhook(url=webhook_url))
+    else:
+        print("Warning: RENDER_EXTERNAL_URL environment variable missing. Webhook setup bypassed.")
 
-    telegram_app.add_handler(CommandHandler("start", start))
-    telegram_app.add_handler(CommandHandler("count", handle_count))
-    telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_count))
-
-    # Initialize the bot properties asynchronously
-    await telegram_app.initialize()
-    await telegram_app.updater.start_polling()
-    await telegram_app.start()
-    print("Telegram Bot engine started...")
-
-    # Fire up the health check web interface simultaneously
-    await run_flask_async()
-
+# ========== MAIN ENTRYPOINT ==========
 if __name__ == '__main__':
-    # Standard entrypoint for python-telegram-bot async systems
-    asyncio.run(main())
+    # Step 1: Register the live url hook with Telegram
+    setup_webhook()
+    
+    # Step 2: Fire up the native webserver
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
