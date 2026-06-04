@@ -3,22 +3,16 @@ import re
 import asyncio
 from flask import Flask, request, jsonify
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters
-from telegram.constants import ParseMode
+from telegram.ext import Application
 
 # ========== CONFIGURATION ==========
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
-# Example: https://your-app-name.onrender.com
 RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL") 
 
 if not TOKEN:
     raise ValueError("TELEGRAM_TOKEN environment variable not set")
 
-# Initialize Flask
 app = Flask(__name__)
-
-# Initialize Telegram Application globally
-telegram_app = Application.builder().token(TOKEN).build()
 
 # ========== HELPER FUNCTIONS ==========
 def count_words(text):
@@ -91,7 +85,7 @@ _{opening}_
 async def start(update: Update, context):
     await update.message.reply_text(
         "Greetings! I am Count Wordsworth. Send me any text or poem, and I will analyze its structure for you.",
-        parse_mode=ParseMode.MARKDOWN
+        parse_mode="Markdown"
     )
 
 async def handle_count(update: Update, context):
@@ -100,43 +94,38 @@ async def handle_count(update: Update, context):
         text = text.replace('/count', '', 1).strip()
 
     response = format_count_response(text)
-    await update.message.reply_text(response, parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(response, parse_mode="Markdown")
 
-# Register Handlers to the Application engine
-telegram_app.add_handler(CommandHandler("start", start))
-telegram_app.add_handler(CommandHandler("count", handle_count))
-telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_count))
-
-# ========== FLASK ROUTES (WEBHOOK INTERFACE) ==========
+# ========== FLASK ROUTES ==========
 @app.route('/')
 def health_check():
-    return jsonify({"status": "healthy", "mode": "webhook"}), 200
+    return jsonify({"status": "healthy"}), 200
 
 @app.route(f'/{TOKEN}', methods=['POST'])
 def telegram_webhook():
-    """Receives incoming messages directly from Telegram."""
-    update = Update.de_json(request.get_json(force=True), telegram_app.bot)
+    telegram_app = Application.builder().token(TOKEN).build()
+    from telegram.ext import CommandHandler, MessageHandler, filters
     
-    # Process the update smoothly using the underlying framework loop
+    telegram_app.add_handler(CommandHandler("start", start))
+    telegram_app.add_handler(CommandHandler("count", handle_count))
+    telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_count))
+    
+    update = Update.de_json(request.get_json(force=True), telegram_app.bot)
     asyncio.run(telegram_app.process_update(update))
     return "OK", 200
 
-def setup_webhook():
-    """Tells Telegram where to send data on startup."""
-    if RENDER_EXTERNAL_URL:
-        webhook_url = f"{RENDER_EXTERNAL_URL.rstrip('/')}/{TOKEN}"
-        print(f"Setting webhook destination to: {webhook_url}")
-        
-        asyncio.run(telegram_app.initialize())
-        asyncio.run(telegram_app.bot.set_webhook(url=webhook_url))
-    else:
-        print("Warning: RENDER_EXTERNAL_URL environment variable missing. Webhook setup bypassed.")
-
 # ========== MAIN ENTRYPOINT ==========
 if __name__ == '__main__':
-    # Step 1: Register the live url hook with Telegram
-    setup_webhook()
-    
-    # Step 2: Fire up the native webserver
+    if RENDER_EXTERNAL_URL:
+        async def set_hook():
+            bot_app = Application.builder().token(TOKEN).build()
+            url = f"{RENDER_EXTERNAL_URL.rstrip('/')}/{TOKEN}"
+            print(f"Setting webhook to: {url}")
+            await bot_app.bot.set_webhook(url=url)
+        try:
+            asyncio.run(set_hook())
+        except Exception as e:
+            print(f"Webhook setup warning: {e}")
+
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
